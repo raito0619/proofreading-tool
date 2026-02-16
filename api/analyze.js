@@ -20,27 +20,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'テキストが必要です' });
   }
 
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 8000,
-        tools: [
-          {
-            type: 'web_search_20250305',
-            name: 'web_search'
-          }
-        ],
-        messages: [
-          {
-            role: 'user',
-            content: `あなたはWebメディアの編集者です。以下の原稿を校正・校閲してください。
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY が設定されていません' });
+  }
+
+  const systemPrompt = `あなたはWebメディアの編集者です。以下の原稿を校正・校閲してください。
 
 以下の5つのカテゴリで分析し、必ずJSON形式のみで返してください。前後の説明は一切不要です。
 
@@ -61,26 +46,102 @@ export default async function handler(req, res) {
 5. readabilityCheck: 語尾の重複、句読点、長文の分割提案
 
 修正がない項目は空配列[]で返してください。
-contextには修正箇所の前後1-2文を含めて、どこの部分かわかるようにしてください。
+contextには修正箇所の前後1-2文を含めて、どこの部分かわかるようにしてください。`;
 
-原稿:
-${text}`
-          }
-        ]
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Anthropic API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    let resultText = '';
-    for (const item of data.content) {
-      if (item.type === 'text') {
-        resultText += item.text;
+  try {
+    const messages = [
+      {
+        role: 'user',
+        content: `原稿:\n${text}`
       }
+    ];
+
+    // web_searchツール使用時、ツール呼び出しが返る場合があるのでループで処理
+    let maxIterations = 10;
+    let resultText = '';
+
+    while (maxIterations > 0) {
+      maxIterations--;
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 8000,
+          system: systemPrompt,
+          tools: [
+            {
+              type: 'web_search_20250305',
+              name: 'web_search'
+            }
+          ],
+          messages: messages
+        })
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error('Anthropic API error body:', errorBody);
+        throw new Error(`Anthropic API error: ${response.status} - ${errorBody}`);
+      }
+
+      const data = await response.json();
+
+      // テキストとツール呼び出しを処理
+      let hasToolUse = false;
+      const toolResults = [];
+
+      for (const block of data.content) {
+        if (block.type === 'text') {
+          resultText += block.text;
+        } else if (block.type === 'tool_use') {
+          hasToolUse = true;
+          // web_searchはサーバーサイドで自動実行されるが、
+          // 念のためツール結果を返す処理を用意
+        } else if (block.type === 'server_tool_use') {
+          hasToolUse = true;
+        }
+      }
+
+      // stop_reasonがend_turnなら完了
+      if (data.stop_reason === 'end_turn') {
+        break;
+      }
+
+      // ツール呼び出しがあった場合、assistantの応答をmessagesに追加して続行
+      if (hasToolUse || data.stop_reason === 'tool_use') {
+        messages.push({
+          role: 'assistant',
+          content: data.content
+        });
+
+        // web_searchの結果を処理
+        const webSearchResults = [];
+        for (const block of data.content) {
+          if (block.type === 'server_tool_use') {
+            webSearchResults.push({
+              type: 'server_tool_result',
+              tool_use_id: block.id
+            });
+          }
+        }
+
+        if (webSearchResults.length > 0) {
+          messages.push({
+            role: 'user',
+            content: webSearchResults
+          });
+        }
+
+        continue;
+      }
+
+      break;
     }
 
     const jsonMatch = resultText.match(/\{[\s\S]*"factCheck"[\s\S]*\}/);
@@ -94,6 +155,7 @@ ${text}`
       const parsedResults = JSON.parse(cleanJson);
       return res.status(200).json(parsedResults);
     } else {
+      console.error('No JSON found in result:', resultText.substring(0, 500));
       throw new Error('JSON形式の結果が見つかりませんでした');
     }
   } catch (error) {
