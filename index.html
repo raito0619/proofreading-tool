@@ -15,57 +15,293 @@
   <script type="text/babel">
     const { useState } = React;
 
-    // Lucide Reactアイコンの代替（シンプルなSVG）
     const FileText = () => <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
     const Copy = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>;
     const CheckCircle = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
     const AlertCircle = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
-    const Link = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>;
     const Type = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>;
     const AlertTriangle = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
     const BookOpen = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>;
+    const Shuffle = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h16v16H4z M8 8h8 M8 12h8 M8 16h4" /></svg>;
+
+    // ===== ルールベース校正エンジン =====
+
+    function getContext(text, index, length) {
+      const start = Math.max(0, index - 30);
+      const end = Math.min(text.length, index + length + 30);
+      let ctx = '';
+      if (start > 0) ctx += '...';
+      ctx += text.slice(start, end);
+      if (end < text.length) ctx += '...';
+      return ctx;
+    }
+
+    // 1. トンマナチェック（ですます調/である調の混在）
+    function checkTone(text) {
+      const results = [];
+      const sentences = text.split(/(?<=[。！？\n])/);
+
+      let desumasuCount = 0;
+      let dearuCount = 0;
+      const desumasuSentences = [];
+      const dearuSentences = [];
+
+      const desumasuPatterns = [
+        /(?:ます|ました|ません|ましょう|です|でした|でしょう|ください)[。！？\n]?$/,
+      ];
+      const dearuPatterns = [
+        /(?:である|だ|だった|だろう|ない|した|する|できる|なる|ある|いる|れる|せる)[。！？\n]?$/,
+      ];
+
+      sentences.forEach((s, i) => {
+        const trimmed = s.trim();
+        if (trimmed.length < 5) return;
+        const isDesumasu = desumasuPatterns.some(p => p.test(trimmed));
+        const isDearu = dearuPatterns.some(p => p.test(trimmed));
+        if (isDesumasu) {
+          desumasuCount++;
+          desumasuSentences.push({ text: trimmed, index: i });
+        }
+        if (isDearu) {
+          dearuCount++;
+          dearuSentences.push({ text: trimmed, index: i });
+        }
+      });
+
+      if (desumasuCount > 0 && dearuCount > 0) {
+        const mainStyle = desumasuCount >= dearuCount ? 'ですます調' : 'である調';
+        const minority = mainStyle === 'ですます調' ? dearuSentences : desumasuSentences;
+
+        minority.slice(0, 10).forEach(item => {
+          const idx = text.indexOf(item.text);
+          results.push({
+            context: getContext(text, idx >= 0 ? idx : 0, item.text.length),
+            original: item.text.length > 60 ? item.text.slice(-60) : item.text,
+            correction: `${mainStyle}に統一してください`,
+            reason: `文体が混在しています。全体は${mainStyle}が多いですが、この文は${mainStyle === 'ですます調' ? 'である調' : 'ですます調'}になっています。`
+          });
+        });
+      }
+
+      return results;
+    }
+
+    // 2. 誤字脱字・よくある間違い
+    function checkTypo(text) {
+      const results = [];
+
+      const typoDict = [
+        { wrong: /こんにちわ/g, correct: 'こんにちは', reason: '「こんにちは」が正しい表記です' },
+        { wrong: /こんばんわ/g, correct: 'こんばんは', reason: '「こんばんは」が正しい表記です' },
+        { wrong: /ずつ(?=[^、。])/g, correct: 'づつ', reason: '「少しずつ」等は「ずつ」が正しいですが、文脈を確認してください', skip: true },
+        { wrong: /づつ/g, correct: 'ずつ', reason: '現代仮名遣いでは「ずつ」が正しい表記です' },
+        { wrong: /おこなって/g, correct: '行って', reason: '「行って」の方が一般的です（文脈により異なります）' },
+        { wrong: /いただきます様/g, correct: 'いただきますよう', reason: '「いただきますよう」がひらがな表記で正しいです' },
+        { wrong: /さまざま/g, correct: '様々', reason: '表記ゆれの可能性があります。「様々」「さまざま」どちらかに統一してください', skip: true },
+        { wrong: /予め/g, correct: 'あらかじめ', reason: '「あらかじめ」とひらがな表記が読みやすいです' },
+        { wrong: /殆ど/g, correct: 'ほとんど', reason: '「ほとんど」とひらがな表記が読みやすいです' },
+        { wrong: /及び/g, correct: 'および', reason: '「および」とひらがな表記が読みやすいです' },
+        { wrong: /若しくは/g, correct: 'もしくは', reason: '「もしくは」とひらがな表記が読みやすいです' },
+        { wrong: /但し/g, correct: 'ただし', reason: '「ただし」とひらがな表記が読みやすいです' },
+        { wrong: /更に/g, correct: 'さらに', reason: '「さらに」とひらがな表記が読みやすいです' },
+        { wrong: /従って/g, correct: 'したがって', reason: '「したがって」とひらがな表記が読みやすいです' },
+        { wrong: /即ち/g, correct: 'すなわち', reason: '「すなわち」とひらがな表記が読みやすいです' },
+        { wrong: /或いは/g, correct: 'あるいは', reason: '「あるいは」とひらがな表記が読みやすいです' },
+        { wrong: /全て/g, correct: 'すべて', reason: 'Webメディアでは「すべて」とひらがな表記が一般的です' },
+        { wrong: /事が/g, correct: 'ことが', reason: '形式名詞の「こと」はひらがな表記が一般的です' },
+        { wrong: /事を/g, correct: 'ことを', reason: '形式名詞の「こと」はひらがな表記が一般的です' },
+        { wrong: /事に/g, correct: 'ことに', reason: '形式名詞の「こと」はひらがな表記が一般的です' },
+        { wrong: /物が/g, correct: 'ものが', reason: '形式名詞の「もの」はひらがな表記が一般的です' },
+        { wrong: /物を/g, correct: 'ものを', reason: '形式名詞の「もの」はひらがな表記が一般的です' },
+        { wrong: /時に/g, correct: 'ときに', reason: '形式名詞の「とき」はひらがな表記が一般的です' },
+        { wrong: /為に/g, correct: 'ために', reason: '「ために」はひらがな表記が一般的です' },
+        { wrong: /出来る/g, correct: 'できる', reason: '「できる」はひらがな表記が一般的です' },
+        { wrong: /出来ます/g, correct: 'できます', reason: '「できます」はひらがな表記が一般的です' },
+        { wrong: /致します/g, correct: 'いたします', reason: '補助動詞の「いたす」はひらがな表記が一般的です' },
+        { wrong: /頂き/g, correct: 'いただき', reason: '補助動詞の「いただく」はひらがな表記が一般的です' },
+        { wrong: /下さい/g, correct: 'ください', reason: '補助動詞の「ください」はひらがな表記が一般的です' },
+        { wrong: /([^、。！？\n])\1{3,}/g, correct: '（繰り返しを削除）', reason: '同じ文字が4回以上連続しています。衍字の可能性があります' },
+        { wrong: /。。/g, correct: '。', reason: '句点が重複しています' },
+        { wrong: /、、/g, correct: '、', reason: '読点が重複しています' },
+        { wrong: /\s　/g, correct: '　', reason: '不要なスペースがあります' },
+        { wrong: /　\s/g, correct: '　', reason: '不要なスペースがあります' },
+      ];
+
+      typoDict.forEach(rule => {
+        if (rule.skip) return;
+        let match;
+        const regex = new RegExp(rule.wrong.source, rule.wrong.flags);
+        while ((match = regex.exec(text)) !== null) {
+          results.push({
+            context: getContext(text, match.index, match[0].length),
+            original: match[0],
+            correction: rule.correct,
+            reason: rule.reason
+          });
+        }
+      });
+
+      return results;
+    }
+
+    // 3. 読みやすさチェック
+    function checkReadability(text) {
+      const results = [];
+      const sentences = text.split(/(?<=[。])/);
+
+      // 長文チェック（80文字以上）
+      sentences.forEach(s => {
+        const trimmed = s.trim();
+        if (trimmed.length > 80) {
+          const idx = text.indexOf(trimmed);
+          results.push({
+            context: trimmed.length > 100 ? trimmed.slice(0, 100) + '...' : trimmed,
+            original: trimmed.length > 60 ? trimmed.slice(0, 60) + '...' : trimmed,
+            correction: '文を分割することを検討してください',
+            reason: `この文は${trimmed.length}文字あります。Webメディアでは60〜80文字程度が読みやすいとされています。`
+          });
+        }
+      });
+
+      // 語尾の重複チェック（連続する文で同じ語尾）
+      for (let i = 0; i < sentences.length - 1; i++) {
+        const current = sentences[i].trim();
+        const next = sentences[i + 1].trim();
+        if (current.length < 5 || next.length < 5) continue;
+
+        const endings = [
+          /ます。$/, /ました。$/, /ません。$/, /です。$/, /でした。$/,
+          /でしょう。$/, /ください。$/, /しょう。$/
+        ];
+
+        for (const pattern of endings) {
+          if (pattern.test(current) && pattern.test(next)) {
+            const idx = text.indexOf(next);
+            results.push({
+              context: getContext(text, idx >= 0 ? idx : 0, next.length),
+              original: (current.length > 40 ? '...' + current.slice(-40) : current) + '\n' + (next.length > 40 ? next.slice(0, 40) + '...' : next),
+              correction: '語尾を変えて変化をつけてください',
+              reason: '連続する文で同じ語尾が続いています。語尾に変化をつけると読みやすくなります。'
+            });
+            break;
+          }
+        }
+      }
+
+      // 一文に読点が多すぎる
+      sentences.forEach(s => {
+        const trimmed = s.trim();
+        const commaCount = (trimmed.match(/、/g) || []).length;
+        if (commaCount >= 4) {
+          const idx = text.indexOf(trimmed);
+          results.push({
+            context: trimmed.length > 100 ? trimmed.slice(0, 100) + '...' : trimmed,
+            original: trimmed.length > 60 ? trimmed.slice(0, 60) + '...' : trimmed,
+            correction: '文を分割して読点を減らすことを検討してください',
+            reason: `一文に読点が${commaCount}個あります。読点が多い文は読みにくくなる傾向があります。`
+          });
+        }
+      });
+
+      return results;
+    }
+
+    // 4. 表記ゆれチェック
+    function checkNotation(text) {
+      const results = [];
+
+      const notationGroups = [
+        { variants: ['サーバー', 'サーバ'], preferred: 'どちらかに統一' },
+        { variants: ['ユーザー', 'ユーザ'], preferred: 'どちらかに統一' },
+        { variants: ['ブラウザー', 'ブラウザ'], preferred: 'どちらかに統一' },
+        { variants: ['コンピューター', 'コンピュータ'], preferred: 'どちらかに統一' },
+        { variants: ['プリンター', 'プリンタ'], preferred: 'どちらかに統一' },
+        { variants: ['フォルダー', 'フォルダ'], preferred: 'どちらかに統一' },
+        { variants: ['メモリー', 'メモリ'], preferred: 'どちらかに統一' },
+        { variants: ['カテゴリー', 'カテゴリ'], preferred: 'どちらかに統一' },
+        { variants: ['セキュリティー', 'セキュリティ'], preferred: 'どちらかに統一' },
+        { variants: ['インターフェース', 'インタフェース', 'インターフェイス'], preferred: 'どちらかに統一' },
+        { variants: ['Webサイト', 'WEBサイト', 'ウェブサイト', 'webサイト'], preferred: 'どちらかに統一' },
+        { variants: ['ホームページ', 'ホーム・ページ'], preferred: 'どちらかに統一' },
+        { variants: ['スマートフォン', 'スマホ'], preferred: 'どちらかに統一' },
+        { variants: ['お問い合わせ', 'お問合せ', 'お問合わせ'], preferred: 'どちらかに統一' },
+        { variants: ['引っ越し', '引越し', '引越'], preferred: 'どちらかに統一' },
+        { variants: ['申し込み', '申込み', '申込'], preferred: 'どちらかに統一' },
+        { variants: ['受け付け', '受付け', '受付'], preferred: 'どちらかに統一' },
+        { variants: ['取り扱い', '取扱い', '取扱'], preferred: 'どちらかに統一' },
+        { variants: ['打ち合わせ', '打合せ', '打ち合せ'], preferred: 'どちらかに統一' },
+        { variants: ['見積もり', '見積り', '見積'], preferred: 'どちらかに統一' },
+      ];
+
+      notationGroups.forEach(group => {
+        const found = {};
+        group.variants.forEach(v => {
+          const regex = new RegExp(v, 'g');
+          let match;
+          const positions = [];
+          while ((match = regex.exec(text)) !== null) {
+            positions.push(match.index);
+          }
+          if (positions.length > 0) {
+            found[v] = positions;
+          }
+        });
+
+        const foundKeys = Object.keys(found);
+        if (foundKeys.length >= 2) {
+          // 多い方を主とする
+          let main = foundKeys[0];
+          let maxCount = found[foundKeys[0]].length;
+          foundKeys.forEach(k => {
+            if (found[k].length > maxCount) {
+              main = k;
+              maxCount = found[k].length;
+            }
+          });
+
+          foundKeys.forEach(k => {
+            if (k !== main) {
+              found[k].forEach(pos => {
+                results.push({
+                  context: getContext(text, pos, k.length),
+                  original: k,
+                  correction: `「${main}」に統一`,
+                  reason: `「${main}」（${maxCount}回）と「${k}」（${found[k].length}回）が混在しています。表記を統一してください。`
+                });
+              });
+            }
+          });
+        }
+      });
+
+      return results;
+    }
+
+    // メイン分析関数
+    function analyzeText(text) {
+      return {
+        toneCheck: checkTone(text),
+        typoCheck: checkTypo(text),
+        readabilityCheck: checkReadability(text),
+        notationCheck: checkNotation(text),
+      };
+    }
+
+    // ===== React UI =====
 
     const ProofreadingTool = () => {
       const [inputText, setInputText] = useState('');
-      const [isAnalyzing, setIsAnalyzing] = useState(false);
-      const [activeTab, setActiveTab] = useState('fact');
+      const [activeTab, setActiveTab] = useState('tone');
       const [results, setResults] = useState(null);
       const [copiedIndex, setCopiedIndex] = useState(null);
 
-      const analyzeText = async () => {
+      const handleAnalyze = () => {
         if (!inputText.trim()) {
           alert('テキストを入力してください');
           return;
         }
-
-        setIsAnalyzing(true);
-
-        try {
-          const response = await fetch('/api/analyze', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              text: inputText.slice(0, 15000)
-            })
-          });
-
-          const responseData = await response.json();
-
-          if (!response.ok) {
-            const detail = responseData.details || responseData.error || JSON.stringify(responseData);
-            throw new Error(`API error ${response.status}: ${detail}`);
-          }
-
-          console.log('Parsed Results:', responseData);
-          setResults(responseData);
-        } catch (error) {
-          console.error('分析エラー:', error);
-          alert(`分析中にエラーが発生しました:\n\n${error.message}`);
-        } finally {
-          setIsAnalyzing(false);
-        }
+        const r = analyzeText(inputText);
+        setResults(r);
       };
 
       const copyToClipboard = (text, index) => {
@@ -76,17 +312,13 @@
 
       const copyAllCorrections = () => {
         if (!results) return;
-
         const allCategories = [
-          { key: 'factCheck', name: 'ファクトチェック' },
-          { key: 'linkCheck', name: 'リンクチェック' },
           { key: 'toneCheck', name: 'トンマナチェック' },
-          { key: 'typoCheck', name: '誤字脱字・衍字' },
-          { key: 'readabilityCheck', name: '読みやすさ' }
+          { key: 'typoCheck', name: '誤字脱字・表記' },
+          { key: 'readabilityCheck', name: '読みやすさ' },
+          { key: 'notationCheck', name: '表記ゆれ' }
         ];
-
         let allText = '【校正・校閲結果】\n\n';
-
         allCategories.forEach(cat => {
           const items = results[cat.key] || [];
           if (items.length > 0) {
@@ -96,30 +328,31 @@
             });
           }
         });
-
         navigator.clipboard.writeText(allText);
         alert('全ての修正案をコピーしました');
       };
 
       const tabs = [
-        { id: 'fact', label: 'ファクトチェック', icon: AlertCircle, key: 'factCheck' },
-        { id: 'link', label: 'リンクチェック', icon: Link, key: 'linkCheck' },
         { id: 'tone', label: 'トンマナ', icon: Type, key: 'toneCheck' },
-        { id: 'typo', label: '誤字脱字', icon: AlertTriangle, key: 'typoCheck' },
-        { id: 'readability', label: '読みやすさ', icon: BookOpen, key: 'readabilityCheck' }
+        { id: 'typo', label: '誤字脱字・表記', icon: AlertTriangle, key: 'typoCheck' },
+        { id: 'readability', label: '読みやすさ', icon: BookOpen, key: 'readabilityCheck' },
+        { id: 'notation', label: '表記ゆれ', icon: AlertCircle, key: 'notationCheck' },
       ];
 
       const activeTabData = tabs.find(t => t.id === activeTab);
       const currentResults = results ? (results[activeTabData.key] || []) : [];
 
+      const totalCount = results ? Object.values(results).reduce((sum, arr) => sum + arr.length, 0) : 0;
+
       return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
           <div className="max-w-6xl mx-auto">
             <div className="bg-white rounded-lg shadow-lg p-8 mb-6">
-              <div className="flex items-center gap-3 mb-6">
+              <div className="flex items-center gap-3 mb-2">
                 <FileText />
                 <h1 className="text-3xl font-bold text-gray-800">Webメディア校正・校閲ツール</h1>
               </div>
+              <p className="text-sm text-gray-500 mb-6">ルールベースで文章をチェックします（API不要・無料）</p>
 
               <div className="space-y-4 mb-6">
                 <div>
@@ -139,18 +372,21 @@
               </div>
 
               <button
-                onClick={analyzeText}
-                disabled={isAnalyzing || !inputText.trim()}
+                onClick={handleAnalyze}
+                disabled={!inputText.trim()}
                 className="w-full py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
-                {isAnalyzing ? '分析中...' : '校正・校閲を開始'}
+                校正・校閲を開始
               </button>
             </div>
 
             {results && (
               <div className="bg-white rounded-lg shadow-lg p-6">
                 <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-800">チェック結果</h2>
+                  <h2 className="text-2xl font-bold text-gray-800">
+                    チェック結果
+                    {totalCount > 0 && <span className="ml-2 text-base text-gray-500">（{totalCount}件）</span>}
+                  </h2>
                   <button
                     onClick={copyAllCorrections}
                     className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
@@ -199,7 +435,7 @@
                       <div key={index} className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow">
                         <div className="mb-4 pb-4 border-b border-gray-200">
                           <h3 className="text-sm font-semibold text-gray-600 mb-2">該当箇所の文脈</h3>
-                          <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded border border-gray-300 leading-relaxed">
+                          <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded border border-gray-300 leading-relaxed whitespace-pre-wrap">
                             {item.context}
                           </p>
                         </div>
@@ -209,7 +445,7 @@
                             <div className="flex items-center justify-between mb-2">
                               <h3 className="font-semibold text-gray-700">原文</h3>
                             </div>
-                            <p className="text-gray-800 bg-red-50 p-3 rounded border border-red-200 leading-relaxed">
+                            <p className="text-gray-800 bg-red-50 p-3 rounded border border-red-200 leading-relaxed whitespace-pre-wrap">
                               {item.original}
                             </p>
                           </div>
@@ -233,7 +469,7 @@
                                 )}
                               </button>
                             </div>
-                            <p className="text-gray-800 bg-green-50 p-3 rounded border border-green-200 font-medium leading-relaxed">
+                            <p className="text-gray-800 bg-green-50 p-3 rounded border border-green-200 font-medium leading-relaxed whitespace-pre-wrap">
                               {item.correction}
                             </p>
                           </div>
