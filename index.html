@@ -294,6 +294,7 @@
       const [activeTab, setActiveTab] = useState('tone');
       const [results, setResults] = useState(null);
       const [copiedIndex, setCopiedIndex] = useState(null);
+      const [itemStatus, setItemStatus] = useState({});
 
       const handleAnalyze = () => {
         if (!inputText.trim()) {
@@ -302,6 +303,15 @@
         }
         const r = analyzeText(inputText);
         setResults(r);
+        setItemStatus({});
+      };
+
+      const setStatus = (key, index, status) => {
+        setItemStatus(prev => ({ ...prev, [`${key}-${index}`]: status }));
+      };
+
+      const getStatus = (key, index) => {
+        return itemStatus[`${key}-${index}`] || null;
       };
 
       const copyToClipboard = (text, index) => {
@@ -344,6 +354,27 @@
 
       const totalCount = results ? Object.values(results).reduce((sum, arr) => sum + arr.length, 0) : 0;
 
+      const getStatusCounts = (key) => {
+        if (!results || !results[key]) return { total: 0, fixed: 0, skipped: 0, remaining: 0 };
+        const total = results[key].length;
+        let fixed = 0, skipped = 0;
+        results[key].forEach((_, i) => {
+          const s = getStatus(key, i);
+          if (s === 'fixed') fixed++;
+          if (s === 'skipped') skipped++;
+        });
+        return { total, fixed, skipped, remaining: total - fixed - skipped };
+      };
+
+      const allStatusCounts = results ? tabs.reduce((acc, tab) => {
+        const c = getStatusCounts(tab.key);
+        acc.total += c.total;
+        acc.fixed += c.fixed;
+        acc.skipped += c.skipped;
+        acc.remaining += c.remaining;
+        return acc;
+      }, { total: 0, fixed: 0, skipped: 0, remaining: 0 }) : null;
+
       return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
           <div className="max-w-6xl mx-auto">
@@ -382,7 +413,7 @@
 
             {results && (
               <div className="bg-white rounded-lg shadow-lg p-6">
-                <div className="flex justify-between items-center mb-6">
+                <div className="flex justify-between items-center mb-4">
                   <h2 className="text-2xl font-bold text-gray-800">
                     チェック結果
                     {totalCount > 0 && <span className="ml-2 text-base text-gray-500">（{totalCount}件）</span>}
@@ -396,10 +427,39 @@
                   </button>
                 </div>
 
+                {allStatusCounts && allStatusCounts.total > 0 && (
+                  <div className="mb-6 bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-700">全体の進捗</span>
+                      <span className="text-sm text-gray-600">
+                        {allStatusCounts.fixed + allStatusCounts.skipped} / {allStatusCounts.total} 完了
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                      <div className="h-3 flex">
+                        <div
+                          className="bg-green-500 transition-all duration-300"
+                          style={{ width: `${(allStatusCounts.fixed / allStatusCounts.total) * 100}%` }}
+                        />
+                        <div
+                          className="bg-gray-400 transition-all duration-300"
+                          style={{ width: `${(allStatusCounts.skipped / allStatusCounts.total) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span> 修正済み {allStatusCounts.fixed}</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-400 inline-block"></span> スキップ {allStatusCounts.skipped}</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-200 inline-block border border-gray-300"></span> 未対応 {allStatusCounts.remaining}</span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
                   {tabs.map(tab => {
                     const Icon = tab.icon;
-                    const count = results[tab.key]?.length || 0;
+                    const sc = getStatusCounts(tab.key);
+                    const allDone = sc.total > 0 && sc.remaining === 0;
                     return (
                       <button
                         key={tab.id}
@@ -412,10 +472,16 @@
                       >
                         <Icon />
                         {tab.label}
-                        {count > 0 && (
-                          <span className="bg-red-100 text-red-600 text-xs font-bold px-2 py-1 rounded-full">
-                            {count}
-                          </span>
+                        {sc.total > 0 && (
+                          allDone ? (
+                            <span className="bg-green-100 text-green-600 text-xs font-bold px-2 py-1 rounded-full">
+                              ✓
+                            </span>
+                          ) : (
+                            <span className="bg-red-100 text-red-600 text-xs font-bold px-2 py-1 rounded-full">
+                              {sc.remaining}
+                            </span>
+                          )
                         )}
                       </button>
                     );
@@ -431,8 +497,44 @@
                       <p className="text-lg font-medium">このカテゴリに修正点はありません</p>
                     </div>
                   ) : (
-                    currentResults.map((item, index) => (
-                      <div key={index} className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow">
+                    currentResults.map((item, index) => {
+                      const status = getStatus(activeTabData.key, index);
+                      return (
+                      <div key={index} className={`border rounded-lg p-5 transition-all duration-300 ${
+                        status === 'fixed' ? 'border-green-300 bg-green-50/30 opacity-70' :
+                        status === 'skipped' ? 'border-gray-300 bg-gray-50/50 opacity-50' :
+                        'border-gray-200 hover:shadow-md'
+                      }`}>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            {status === 'fixed' && <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">✓ 修正済み</span>}
+                            {status === 'skipped' && <span className="text-xs font-bold text-gray-500 bg-gray-200 px-2 py-1 rounded-full">→ スキップ</span>}
+                            {!status && <span className="text-xs font-bold text-orange-600 bg-orange-100 px-2 py-1 rounded-full">● 未対応</span>}
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setStatus(activeTabData.key, index, status === 'fixed' ? null : 'fixed')}
+                              className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${
+                                status === 'fixed'
+                                  ? 'bg-green-600 text-white'
+                                  : 'bg-green-100 text-green-700 hover:bg-green-200'
+                              }`}
+                            >
+                              ✓ 修正した
+                            </button>
+                            <button
+                              onClick={() => setStatus(activeTabData.key, index, status === 'skipped' ? null : 'skipped')}
+                              className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${
+                                status === 'skipped'
+                                  ? 'bg-gray-600 text-white'
+                                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                              }`}
+                            >
+                              → スキップ
+                            </button>
+                          </div>
+                        </div>
+
                         <div className="mb-4 pb-4 border-b border-gray-200">
                           <h3 className="text-sm font-semibold text-gray-600 mb-2">該当箇所の文脈</h3>
                           <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded border border-gray-300 leading-relaxed whitespace-pre-wrap">
@@ -480,7 +582,8 @@
                           <p className="text-sm text-gray-700 leading-relaxed">{item.reason}</p>
                         </div>
                       </div>
-                    ))
+                    );})
+
                   )}
                 </div>
               </div>
