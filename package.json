@@ -1,0 +1,9 @@
+{
+  "name": "proofreading-tool",
+  "version": "1.0.0",
+  "description": "Webメディア校正・校閲ツール",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'Build complete'"
+  }
+}

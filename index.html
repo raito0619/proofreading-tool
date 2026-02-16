@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webメディア校正・校閲ツール</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState } = React;
+
+    // Lucide Reactアイコンの代替（シンプルなSVG）
+    const FileText = () => <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
+    const Copy = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>;
+    const CheckCircle = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+    const AlertCircle = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+    const Link = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>;
+    const Type = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>;
+    const AlertTriangle = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
+    const BookOpen = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>;
+
+    const ProofreadingTool = () => {
+      const [inputText, setInputText] = useState('');
+      const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [activeTab, setActiveTab] = useState('fact');
+      const [results, setResults] = useState(null);
+      const [copiedIndex, setCopiedIndex] = useState(null);
+
+      const analyzeText = async () => {
+        if (!inputText.trim()) {
+          alert('テキストを入力してください');
+          return;
+        }
+
+        setIsAnalyzing(true);
+
+        try {
+          const response = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              text: inputText.slice(0, 15000)
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+          }
+
+          const parsedResults = await response.json();
+          console.log('Parsed Results:', parsedResults);
+          setResults(parsedResults);
+        } catch (error) {
+          console.error('分析エラー:', error);
+          alert(`分析中にエラーが発生しました: ${error.message}`);
+        } finally {
+          setIsAnalyzing(false);
+        }
+      };
+
+      const copyToClipboard = (text, index) => {
+        navigator.clipboard.writeText(text);
+        setCopiedIndex(index);
+        setTimeout(() => setCopiedIndex(null), 2000);
+      };
+
+      const copyAllCorrections = () => {
+        if (!results) return;
+
+        const allCategories = [
+          { key: 'factCheck', name: 'ファクトチェック' },
+          { key: 'linkCheck', name: 'リンクチェック' },
+          { key: 'toneCheck', name: 'トンマナチェック' },
+          { key: 'typoCheck', name: '誤字脱字・衍字' },
+          { key: 'readabilityCheck', name: '読みやすさ' }
+        ];
+
+        let allText = '【校正・校閲結果】\n\n';
+
+        allCategories.forEach(cat => {
+          const items = results[cat.key] || [];
+          if (items.length > 0) {
+            allText += `■ ${cat.name}\n\n`;
+            items.forEach((item, idx) => {
+              allText += `${idx + 1}. 【文脈】\n${item.context}\n\n【原文】\n${item.original}\n\n【修正案】\n${item.correction}\n\n【理由】\n${item.reason}\n\n---\n\n`;
+            });
+          }
+        });
+
+        navigator.clipboard.writeText(allText);
+        alert('全ての修正案をコピーしました');
+      };
+
+      const tabs = [
+        { id: 'fact', label: 'ファクトチェック', icon: AlertCircle, key: 'factCheck' },
+        { id: 'link', label: 'リンクチェック', icon: Link, key: 'linkCheck' },
+        { id: 'tone', label: 'トンマナ', icon: Type, key: 'toneCheck' },
+        { id: 'typo', label: '誤字脱字', icon: AlertTriangle, key: 'typoCheck' },
+        { id: 'readability', label: '読みやすさ', icon: BookOpen, key: 'readabilityCheck' }
+      ];
+
+      const activeTabData = tabs.find(t => t.id === activeTab);
+      const currentResults = results ? (results[activeTabData.key] || []) : [];
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
+          <div className="max-w-6xl mx-auto">
+            <div className="bg-white rounded-lg shadow-lg p-8 mb-6">
+              <div className="flex items-center gap-3 mb-6">
+                <FileText />
+                <h1 className="text-3xl font-bold text-gray-800">Webメディア校正・校閲ツール</h1>
+              </div>
+
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    原稿テキスト
+                  </label>
+                  <textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="校正・校閲する原稿を貼り付けてください..."
+                    className="w-full h-96 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none font-mono text-sm"
+                  />
+                  <p className="text-sm text-gray-500 mt-1">
+                    文字数: {inputText.length}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={analyzeText}
+                disabled={isAnalyzing || !inputText.trim()}
+                className="w-full py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {isAnalyzing ? '分析中...' : '校正・校閲を開始'}
+              </button>
+            </div>
+
+            {results && (
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-bold text-gray-800">チェック結果</h2>
+                  <button
+                    onClick={copyAllCorrections}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  >
+                    <Copy />
+                    全修正案をコピー
+                  </button>
+                </div>
+
+                <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
+                  {tabs.map(tab => {
+                    const Icon = tab.icon;
+                    const count = results[tab.key]?.length || 0;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${
+                          activeTab === tab.id
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-gray-600 hover:text-gray-800'
+                        }`}
+                      >
+                        <Icon />
+                        {tab.label}
+                        {count > 0 && (
+                          <span className="bg-red-100 text-red-600 text-xs font-bold px-2 py-1 rounded-full">
+                            {count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-4">
+                  {currentResults.length === 0 ? (
+                    <div className="text-center py-12 text-gray-500">
+                      <div className="w-16 h-16 mx-auto mb-4 text-green-500">
+                        <CheckCircle />
+                      </div>
+                      <p className="text-lg font-medium">このカテゴリに修正点はありません</p>
+                    </div>
+                  ) : (
+                    currentResults.map((item, index) => (
+                      <div key={index} className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow">
+                        <div className="mb-4 pb-4 border-b border-gray-200">
+                          <h3 className="text-sm font-semibold text-gray-600 mb-2">該当箇所の文脈</h3>
+                          <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded border border-gray-300 leading-relaxed">
+                            {item.context}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <h3 className="font-semibold text-gray-700">原文</h3>
+                            </div>
+                            <p className="text-gray-800 bg-red-50 p-3 rounded border border-red-200 leading-relaxed">
+                              {item.original}
+                            </p>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <h3 className="font-semibold text-gray-700">修正案</h3>
+                              <button
+                                onClick={() => copyToClipboard(item.correction, `${activeTab}-${index}`)}
+                                className="flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 transition-colors text-sm font-medium"
+                              >
+                                {copiedIndex === `${activeTab}-${index}` ? (
+                                  <>
+                                    <CheckCircle />
+                                    コピー済み
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy />
+                                    コピー
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <p className="text-gray-800 bg-green-50 p-3 rounded border border-green-200 font-medium leading-relaxed">
+                              {item.correction}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <h4 className="text-sm font-semibold text-gray-600 mb-2">修正理由</h4>
+                          <p className="text-sm text-gray-700 leading-relaxed">{item.reason}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<ProofreadingTool />, document.getElementById('root'));
+  </script>
+</body>
+</html>
