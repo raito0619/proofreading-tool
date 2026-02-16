@@ -51,16 +51,18 @@
             })
           });
 
+          const responseData = await response.json();
+
           if (!response.ok) {
-            throw new Error(`API error: ${response.status}`);
+            const detail = responseData.details || responseData.error || JSON.stringify(responseData);
+            throw new Error(`API error ${response.status}: ${detail}`);
           }
 
-          const parsedResults = await response.json();
-          console.log('Parsed Results:', parsedResults);
-          setResults(parsedResults);
+          console.log('Parsed Results:', responseData);
+          setResults(responseData);
         } catch (error) {
           console.error('分析エラー:', error);
-          alert(`分析中にエラーが発生しました: ${error.message}`);
+          alert(`分析中にエラーが発生しました:\n\n${error.message}`);
         } finally {
           setIsAnalyzing(false);
         }
