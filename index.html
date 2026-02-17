@@ -37,34 +37,6 @@
       return ctx;
     }
 
-    // 語尾変換ヘルパー
-    function convertEnding(sentence, toDesumasu) {
-      const s = sentence.replace(/[。！？\n]+$/, '');
-      const suffix = sentence.slice(s.length) || '。';
-      if (toDesumasu) {
-        const conversions = [
-          [/である$/, 'です'], [/だ$/, 'です'], [/だった$/, 'でした'],
-          [/だろう$/, 'でしょう'], [/ない$/, 'ありません'], [/した$/, 'しました'],
-          [/する$/, 'します'], [/できる$/, 'できます'], [/なる$/, 'なります'],
-          [/ある$/, 'あります'], [/いる$/, 'います'], [/れる$/, 'れます'],
-          [/せる$/, 'せます'], [/物足りない$/, '物足りなく感じます'],
-        ];
-        for (const [pattern, replacement] of conversions) {
-          if (pattern.test(s)) return s.replace(pattern, replacement) + suffix;
-        }
-      } else {
-        const conversions = [
-          [/ます$/, 'る'], [/ました$/, 'た'], [/ません$/, 'ない'],
-          [/ましょう$/, 'よう'], [/です$/, 'だ'], [/でした$/, 'だった'],
-          [/でしょう$/, 'だろう'], [/ください$/, 'くれ'],
-        ];
-        for (const [pattern, replacement] of conversions) {
-          if (pattern.test(s)) return s.replace(pattern, replacement) + suffix;
-        }
-      }
-      return null;
-    }
-
     // 1. トンマナチェック（ですます調/である調の混在）
     function checkTone(text) {
       const results = [];
@@ -104,17 +76,13 @@
 
         minority.slice(0, 10).forEach(item => {
           const idx = text.indexOf(item.text);
-          const converted = convertEnding(item.text, toDesumasu);
-          const corrections = [];
-          if (converted) corrections.push(converted);
-          corrections.push(`（${mainStyle}に合わせて語尾を調整してください）`);
-
           results.push({
             context: getContext(text, idx >= 0 ? idx : 0, item.text.length),
             original: item.text,
-            corrections: corrections,
-            correction: corrections[0],
-            reason: `文体が混在しています。全体は${mainStyle}が多いですが、この文は${toDesumasu ? 'である調' : 'ですます調'}になっています。`
+            corrections: null,
+            correction: null,
+            reason: `文体が混在しています。全体は${mainStyle}が多いですが、この文は${toDesumasu ? 'である調' : 'ですます調'}になっています。`,
+            aiHint: `この文を${mainStyle}に書き換えてください`
           });
         });
       }
@@ -168,92 +136,22 @@
         let match;
         const regex = new RegExp(rule.wrong.source, rule.wrong.flags);
         while ((match = regex.exec(text)) !== null) {
-          // 該当箇所を含む文を取得して修正文を生成
           const sentenceStart = text.lastIndexOf('。', match.index) + 1;
           const sentenceEnd = text.indexOf('。', match.index + match[0].length);
           const originalSentence = text.slice(sentenceStart, sentenceEnd >= 0 ? sentenceEnd + 1 : text.length).trim();
-          const correctedSentence = originalSentence.replace(match[0], rule.correct);
 
           results.push({
             context: getContext(text, match.index, match[0].length),
             original: originalSentence || match[0],
-            corrections: [correctedSentence],
-            correction: correctedSentence,
-            reason: rule.reason
+            corrections: null,
+            correction: null,
+            reason: rule.reason,
+            aiHint: `「${match[0]}」を「${rule.correct}」に修正し、文全体を自然にしてください`
           });
         }
       });
 
       return results;
-    }
-
-    // 文を読点位置で分割する案を生成
-    function splitSentence(sentence) {
-      const s = sentence.replace(/。$/, '');
-      const commaPositions = [];
-      for (let i = 0; i < s.length; i++) {
-        if (s[i] === '、') commaPositions.push(i);
-      }
-      if (commaPositions.length === 0) return [];
-
-      const results = [];
-      // 中間付近の読点で分割
-      const midTarget = s.length / 2;
-      const sortedByMid = [...commaPositions].sort((a, b) => Math.abs(a - midTarget) - Math.abs(b - midTarget));
-      const bestSplit = sortedByMid[0];
-      const part1 = s.slice(0, bestSplit).trim();
-      const part2 = s.slice(bestSplit + 1).trim();
-      if (part1.length >= 10 && part2.length >= 10) {
-        // 前半に「。」で終わる文を生成
-        let p1 = part1;
-        // 前半の末尾が用言的なら「。」をつける
-        if (/[るたいすくきぎしちにびみりえけげせてねべめれ]$/.test(p1)) {
-          results.push(p1 + '。' + part2 + '。');
-        } else if (/ます$|です$|した$|ました$/.test(p1)) {
-          results.push(p1 + '。' + part2 + '。');
-        } else {
-          // 前半に「です。」を補って分割
-          results.push(p1 + 'です。' + part2 + '。');
-          results.push(p1 + '。' + part2 + '。');
-        }
-      }
-
-      // 別の位置での分割案
-      if (commaPositions.length >= 2) {
-        const secondBest = sortedByMid[1];
-        const p1b = s.slice(0, secondBest).trim();
-        const p2b = s.slice(secondBest + 1).trim();
-        if (p1b.length >= 10 && p2b.length >= 10) {
-          if (/[るたいすくきぎしちにびみりえけげせてねべめれ]$/.test(p1b) || /ます$|です$|した$|ました$/.test(p1b)) {
-            results.push(p1b + '。' + p2b + '。');
-          }
-        }
-      }
-
-      return [...new Set(results)]; // 重複除去
-    }
-
-    // 語尾の代替案を生成
-    function alternateEnding(sentence) {
-      const s = sentence.replace(/。$/, '');
-      const alternatives = [];
-      const endingAlts = [
-        { pattern: /ます$/, alts: ['ています', 'られます', 'でしょう'] },
-        { pattern: /ました$/, alts: ['ています', 'たのです', 'られました'] },
-        { pattern: /です$/, alts: ['でしょう', 'となります', 'と言えます'] },
-        { pattern: /でした$/, alts: ['となりました', 'だったのです', 'と言えます'] },
-        { pattern: /ません$/, alts: ['ないでしょう', 'ないと言えます', 'とは限りません'] },
-        { pattern: /ください$/, alts: ['ましょう', 'てみてください', 'ことをおすすめします'] },
-      ];
-      for (const { pattern, alts } of endingAlts) {
-        if (pattern.test(s)) {
-          alts.forEach(alt => {
-            alternatives.push(s.replace(pattern, alt) + '。');
-          });
-          break;
-        }
-      }
-      return alternatives;
     }
 
     // 3. 読みやすさチェック
@@ -265,23 +163,18 @@
       sentences.forEach(s => {
         const trimmed = s.trim();
         if (trimmed.length > 80) {
-          const idx = text.indexOf(trimmed);
-          const splitOptions = splitSentence(trimmed);
-          const corrections = splitOptions.length > 0
-            ? splitOptions
-            : ['（読点の位置で文を分割してください）'];
-
           results.push({
             context: trimmed.length > 100 ? trimmed.slice(0, 100) + '...' : trimmed,
             original: trimmed,
-            corrections: corrections,
-            correction: corrections[0],
-            reason: `この文は${trimmed.length}文字あります。Webメディアでは60〜80文字程度が読みやすいとされています。`
+            corrections: null,
+            correction: null,
+            reason: `この文は${trimmed.length}文字あります。Webメディアでは60〜80文字程度が読みやすいとされています。`,
+            aiHint: 'この長い文を、意味が通る形で2〜3文に分割してください'
           });
         }
       });
 
-      // 語尾の重複チェック（連続する文で同じ語尾）
+      // 語尾の重複チェック
       for (let i = 0; i < sentences.length - 1; i++) {
         const current = sentences[i].trim();
         const next = sentences[i + 1].trim();
@@ -295,17 +188,13 @@
         for (const pattern of endings) {
           if (pattern.test(current) && pattern.test(next)) {
             const idx = text.indexOf(next);
-            const alts = alternateEnding(next);
-            const corrections = alts.length > 0
-              ? alts
-              : ['（語尾を変えて変化をつけてください）'];
-
             results.push({
               context: getContext(text, idx >= 0 ? idx : 0, next.length),
               original: (current.length > 40 ? '...' + current.slice(-40) : current) + '\n' + next,
-              corrections: corrections,
-              correction: corrections[0],
-              reason: '連続する文で同じ語尾が続いています。2文目の語尾を変えると読みやすくなります。'
+              corrections: null,
+              correction: null,
+              reason: '連続する文で同じ語尾が続いています。語尾に変化をつけると読みやすくなります。',
+              aiHint: '2文目の語尾を変えて、文末表現に変化をつけてください。意味は変えないでください'
             });
             break;
           }
@@ -317,18 +206,13 @@
         const trimmed = s.trim();
         const commaCount = (trimmed.match(/、/g) || []).length;
         if (commaCount >= 4) {
-          const idx = text.indexOf(trimmed);
-          const splitOptions = splitSentence(trimmed);
-          const corrections = splitOptions.length > 0
-            ? splitOptions
-            : ['（読点の位置で文を分割してください）'];
-
           results.push({
             context: trimmed.length > 100 ? trimmed.slice(0, 100) + '...' : trimmed,
             original: trimmed,
-            corrections: corrections,
-            correction: corrections[0],
-            reason: `一文に読点が${commaCount}個あります。文を分割すると読みやすくなります。`
+            corrections: null,
+            correction: null,
+            reason: `一文に読点が${commaCount}個あります。文を分割すると読みやすくなります。`,
+            aiHint: 'この文を読点の位置で分割して、読みやすい2〜3文にしてください'
           });
         }
       });
@@ -392,18 +276,17 @@
           foundKeys.forEach(k => {
             if (k !== main) {
               found[k].forEach(pos => {
-                // 該当箇所を含む文を取得して修正文を生成
                 const sentenceStart = text.lastIndexOf('。', pos) + 1;
                 const sentenceEnd = text.indexOf('。', pos + k.length);
                 const originalSentence = text.slice(sentenceStart, sentenceEnd >= 0 ? sentenceEnd + 1 : text.length).trim();
-                const correctedSentence = originalSentence.replace(k, main);
 
                 results.push({
                   context: getContext(text, pos, k.length),
                   original: originalSentence || k,
-                  corrections: [correctedSentence],
-                  correction: correctedSentence,
-                  reason: `「${main}」（${maxCount}回）と「${k}」（${found[k].length}回）が混在しています。「${main}」に統一してください。`
+                  corrections: null,
+                  correction: null,
+                  reason: `「${main}」（${maxCount}回）と「${k}」（${found[k].length}回）が混在しています。「${main}」に統一してください。`,
+                  aiHint: `「${k}」を「${main}」に置き換えて、文全体を自然にしてください`
                 });
               });
             }
@@ -436,6 +319,50 @@
       const [aiError, setAiError] = useState(null);
       const [correctionIndex, setCorrectionIndex] = useState({});
 
+      // AI修正案を生成するリクエスト（カテゴリ単位でバッチ処理）
+      const fetchAiCorrections = async (categoryKey, items, setResultsFn) => {
+        if (!items || items.length === 0) return;
+        const needsAi = items.filter(item => item.corrections === null && item.aiHint);
+        if (needsAi.length === 0) return;
+
+        try {
+          const response = await fetch('/api/rewrite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              items: needsAi.map(item => ({
+                original: item.original,
+                aiHint: item.aiHint,
+                reason: item.reason
+              }))
+            })
+          });
+
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.details || data.error);
+
+          if (data.results) {
+            setResultsFn(prev => {
+              if (!prev) return prev;
+              const updated = [...(prev[categoryKey] || [])];
+              let aiIdx = 0;
+              updated.forEach((item, i) => {
+                if (item.corrections === null && item.aiHint) {
+                  const aiResult = data.results.find(r => r.index === aiIdx);
+                  if (aiResult && aiResult.corrections && aiResult.corrections.length > 0) {
+                    updated[i] = { ...item, corrections: aiResult.corrections, correction: aiResult.corrections[0] };
+                  }
+                  aiIdx++;
+                }
+              });
+              return { ...prev, [categoryKey]: updated };
+            });
+          }
+        } catch (error) {
+          console.error(`AI修正案生成エラー (${categoryKey}):`, error);
+        }
+      };
+
       const handleAnalyze = async () => {
         if (!inputText.trim()) {
           alert('テキストを入力してください');
@@ -456,37 +383,42 @@
         setItemStatus({});
         setCorrectionIndex({});
         setAiError(null);
-
-        // AI校正を開始
         setIsAnalyzing(true);
-        try {
-          const response = await fetch('/api/analyze', {
+
+        // AI処理を並行実行
+        const aiTasks = [];
+
+        // 1. ファクトチェック・リンクチェック（既存API）
+        aiTasks.push(
+          fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: inputText.slice(0, 15000) })
-          });
+          })
+          .then(r => r.json())
+          .then(responseData => {
+            setResults(prev => ({
+              ...prev,
+              factCheck: responseData.factCheck || [],
+              linkCheck: responseData.linkCheck || [],
+            }));
+          })
+          .catch(err => {
+            console.error('AI分析エラー:', err);
+            setAiError(err.message);
+          })
+        );
 
-          const responseData = await response.json();
-
-          if (!response.ok) {
-            throw new Error(responseData.details || responseData.error || `API error: ${response.status}`);
+        // 2. ルールベース検出結果のAI修正案生成（カテゴリごとに並行リクエスト）
+        const ruleCategories = ['toneCheck', 'typoCheck', 'readabilityCheck', 'notationCheck'];
+        ruleCategories.forEach(catKey => {
+          if (ruleResults[catKey] && ruleResults[catKey].length > 0) {
+            aiTasks.push(fetchAiCorrections(catKey, ruleResults[catKey], setResults));
           }
+        });
 
-          // AI結果をマージ
-          setResults(prev => ({
-            ...prev,
-            factCheck: responseData.factCheck || [],
-            linkCheck: responseData.linkCheck || [],
-            toneCheck: [...(prev.toneCheck || []), ...(responseData.toneCheck || [])],
-            typoCheck: [...(prev.typoCheck || []), ...(responseData.typoCheck || [])],
-            readabilityCheck: [...(prev.readabilityCheck || []), ...(responseData.readabilityCheck || [])],
-          }));
-        } catch (error) {
-          console.error('AI分析エラー:', error);
-          setAiError(error.message);
-        } finally {
-          setIsAnalyzing(false);
-        }
+        await Promise.allSettled(aiTasks);
+        setIsAnalyzing(false);
       };
 
       const setStatus = (key, index, status) => {
@@ -535,7 +467,7 @@
           if (items.length > 0) {
             allText += `■ ${cat.name}\n\n`;
             items.forEach((item, idx) => {
-              const correction = getCurrentCorrection(item, cat.key, idx);
+              const correction = item.corrections ? getCurrentCorrection(item, cat.key, idx) : '（AI生成中...）';
               allText += `${idx + 1}. 【文脈】\n${item.context}\n\n【原文】\n${item.original}\n\n【修正案】\n${correction}\n\n【理由】\n${item.reason}\n\n---\n\n`;
             });
           }
@@ -695,7 +627,7 @@
                 {isAnalyzing && (
                   <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3">
                     <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                    <span className="text-sm text-blue-700 font-medium">AIが分析中です... ファクトチェック・リンクチェックの結果が追加されます</span>
+                    <span className="text-sm text-blue-700 font-medium">AIが分析中です... 修正案の生成とファクトチェック・リンクチェックを行っています</span>
                   </div>
                 )}
 
@@ -773,14 +705,20 @@
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-2">
                                 <h3 className="font-semibold text-gray-700">修正案</h3>
-                                {(item.corrections || []).length > 1 && (
+                                {item.corrections && item.corrections.length > 1 && (
                                   <span className="text-xs text-gray-400">
-                                    {getCorrectionIdx(activeTabData.key, index) + 1}/{(item.corrections || []).length}
+                                    {getCorrectionIdx(activeTabData.key, index) + 1}/{item.corrections.length}
+                                  </span>
+                                )}
+                                {item.corrections === null && (
+                                  <span className="text-xs text-blue-500 font-medium flex items-center gap-1">
+                                    <span className="animate-spin inline-block w-3 h-3 border border-blue-500 border-t-transparent rounded-full"></span>
+                                    AI生成中
                                   </span>
                                 )}
                               </div>
                               <div className="flex items-center gap-2">
-                                {(item.corrections || []).length > 1 && (
+                                {item.corrections && item.corrections.length > 1 && (
                                   <button
                                     onClick={() => cycleCorrection(activeTabData.key, index, item.corrections.length)}
                                     className="flex items-center gap-1 px-3 py-1 bg-amber-100 text-amber-700 rounded hover:bg-amber-200 transition-colors text-sm font-medium"
@@ -788,27 +726,36 @@
                                     ↻ 別の案
                                   </button>
                                 )}
-                                <button
-                                  onClick={() => copyToClipboard(getCurrentCorrection(item, activeTabData.key, index), `${activeTab}-${index}`)}
-                                  className="flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 transition-colors text-sm font-medium"
-                                >
-                                  {copiedIndex === `${activeTab}-${index}` ? (
-                                    <>
-                                      <CheckCircle />
-                                      コピー済み
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy />
-                                      コピー
-                                    </>
-                                  )}
-                                </button>
+                                {item.corrections && (
+                                  <button
+                                    onClick={() => copyToClipboard(getCurrentCorrection(item, activeTabData.key, index), `${activeTab}-${index}`)}
+                                    className="flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 transition-colors text-sm font-medium"
+                                  >
+                                    {copiedIndex === `${activeTab}-${index}` ? (
+                                      <>
+                                        <CheckCircle />
+                                        コピー済み
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy />
+                                        コピー
+                                      </>
+                                    )}
+                                  </button>
+                                )}
                               </div>
                             </div>
-                            <p className="text-gray-800 bg-green-50 p-3 rounded border border-green-200 font-medium leading-relaxed whitespace-pre-wrap">
-                              {getCurrentCorrection(item, activeTabData.key, index)}
-                            </p>
+                            {item.corrections === null ? (
+                              <div className="bg-blue-50 p-3 rounded border border-blue-200 text-sm text-blue-600 flex items-center gap-2">
+                                <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                                AIが自然な修正文を生成しています...
+                              </div>
+                            ) : (
+                              <p className="text-gray-800 bg-green-50 p-3 rounded border border-green-200 font-medium leading-relaxed whitespace-pre-wrap">
+                                {getCurrentCorrection(item, activeTabData.key, index)}
+                              </p>
+                            )}
                           </div>
                         </div>
 
