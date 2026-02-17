@@ -27,6 +27,38 @@ export default async function handler(req, res) {
   }
 
   try {
+    const prompt = `あなたはWebメディア専門のプロ校正者です。以下の原稿を校正・校閲し、問題箇所と具体的な修正文を提示してください。
+
+チェック項目:
+1. factCheck: 事実と異なる可能性がある記述（数値、固有名詞、日付など）
+2. linkCheck: URLの記述ミスや不適切なリンクテキスト
+3. toneCheck: ですます調/である調の混在
+4. typoCheck: 誤字脱字、不適切な漢字使用（形式名詞・補助動詞はひらがなが一般的）
+5. readabilityCheck: 長すぎる文（80文字超）、語尾の連続重複、読点の多用
+6. notationCheck: 表記ゆれ（サーバー/サーバ等の混在）
+
+ルール:
+- 各項目のcorrectionsには、具体的に修正した文章を2〜3案入れてください
+- 「ですます調に統一してください」のような抽象的な指示ではなく、実際に書き換えた文を返してください
+- 問題がないカテゴリは空配列にしてください
+- 必ず以下のJSON形式のみで返答してください（他のテキストは含めないでください）
+
+{
+  "factCheck": [
+    { "context": "該当箇所の前後を含む文脈", "original": "問題のある原文", "corrections": ["修正案1", "修正案2"], "reason": "修正理由" }
+  ],
+  "linkCheck": [],
+  "toneCheck": [
+    { "context": "文脈", "original": "原文", "corrections": ["修正案1", "修正案2", "修正案3"], "reason": "理由" }
+  ],
+  "typoCheck": [],
+  "readabilityCheck": [],
+  "notationCheck": []
+}
+
+原稿:
+${text.slice(0, 15000)}`;
+
     const response = await fetch(`${apiUrl}/chat-messages`, {
       method: 'POST',
       headers: {
@@ -35,7 +67,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         inputs: {},
-        query: `以下の原稿を校正・校閲してください。必ずJSON形式のみで返してください。\n\n原稿:\n${text.slice(0, 15000)}`,
+        query: prompt,
         response_mode: 'blocking',
         user: 'proofreading-tool'
       })
@@ -62,6 +94,21 @@ export default async function handler(req, res) {
         .trim();
 
       const parsedResults = JSON.parse(cleanJson);
+
+      // correctionsが無い項目にはcorrection互換性を追加
+      const categories = ['factCheck', 'linkCheck', 'toneCheck', 'typoCheck', 'readabilityCheck', 'notationCheck'];
+      categories.forEach(cat => {
+        if (parsedResults[cat]) {
+          parsedResults[cat] = parsedResults[cat].map(item => ({
+            ...item,
+            corrections: item.corrections || [item.correction].filter(Boolean),
+            correction: (item.corrections && item.corrections[0]) || item.correction || null
+          }));
+        } else {
+          parsedResults[cat] = [];
+        }
+      });
+
       return res.status(200).json(parsedResults);
     } else {
       return res.status(500).json({
