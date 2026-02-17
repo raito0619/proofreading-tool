@@ -22,7 +22,8 @@
     const Type = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>;
     const AlertTriangle = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
     const BookOpen = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>;
-    const Shuffle = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h16v16H4z M8 8h8 M8 12h8 M8 16h4" /></svg>;
+    const Link = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>;
+    const Search = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>;
 
     // ===== ルールベース校正エンジン =====
 
@@ -291,19 +292,63 @@
 
     const ProofreadingTool = () => {
       const [inputText, setInputText] = useState('');
-      const [activeTab, setActiveTab] = useState('tone');
+      const [activeTab, setActiveTab] = useState('fact');
       const [results, setResults] = useState(null);
       const [copiedIndex, setCopiedIndex] = useState(null);
       const [itemStatus, setItemStatus] = useState({});
+      const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [aiError, setAiError] = useState(null);
 
-      const handleAnalyze = () => {
+      const handleAnalyze = async () => {
         if (!inputText.trim()) {
           alert('テキストを入力してください');
           return;
         }
-        const r = analyzeText(inputText);
-        setResults(r);
+
+        // まずルールベースの結果を即座に表示
+        const ruleResults = analyzeText(inputText);
+        const combined = {
+          factCheck: [],
+          linkCheck: [],
+          toneCheck: ruleResults.toneCheck,
+          typoCheck: ruleResults.typoCheck,
+          readabilityCheck: ruleResults.readabilityCheck,
+          notationCheck: ruleResults.notationCheck,
+        };
+        setResults(combined);
         setItemStatus({});
+        setAiError(null);
+
+        // AI校正を開始
+        setIsAnalyzing(true);
+        try {
+          const response = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: inputText.slice(0, 15000) })
+          });
+
+          const responseData = await response.json();
+
+          if (!response.ok) {
+            throw new Error(responseData.details || responseData.error || `API error: ${response.status}`);
+          }
+
+          // AI結果をマージ
+          setResults(prev => ({
+            ...prev,
+            factCheck: responseData.factCheck || [],
+            linkCheck: responseData.linkCheck || [],
+            toneCheck: [...(prev.toneCheck || []), ...(responseData.toneCheck || [])],
+            typoCheck: [...(prev.typoCheck || []), ...(responseData.typoCheck || [])],
+            readabilityCheck: [...(prev.readabilityCheck || []), ...(responseData.readabilityCheck || [])],
+          }));
+        } catch (error) {
+          console.error('AI分析エラー:', error);
+          setAiError(error.message);
+        } finally {
+          setIsAnalyzing(false);
+        }
       };
 
       const setStatus = (key, index, status) => {
@@ -323,6 +368,8 @@
       const copyAllCorrections = () => {
         if (!results) return;
         const allCategories = [
+          { key: 'factCheck', name: 'ファクトチェック' },
+          { key: 'linkCheck', name: 'リンクチェック' },
           { key: 'toneCheck', name: 'トンマナチェック' },
           { key: 'typoCheck', name: '誤字脱字・表記' },
           { key: 'readabilityCheck', name: '読みやすさ' },
@@ -343,6 +390,8 @@
       };
 
       const tabs = [
+        { id: 'fact', label: 'ファクトチェック', icon: Search, key: 'factCheck', ai: true },
+        { id: 'link', label: 'リンクチェック', icon: Link, key: 'linkCheck', ai: true },
         { id: 'tone', label: 'トンマナ', icon: Type, key: 'toneCheck' },
         { id: 'typo', label: '誤字脱字・表記', icon: AlertTriangle, key: 'typoCheck' },
         { id: 'readability', label: '読みやすさ', icon: BookOpen, key: 'readabilityCheck' },
@@ -383,7 +432,7 @@
                 <FileText />
                 <h1 className="text-3xl font-bold text-gray-800">Webメディア校正・校閲ツール</h1>
               </div>
-              <p className="text-sm text-gray-500 mb-6">ルールベースで文章をチェックします（API不要・無料）</p>
+              <p className="text-sm text-gray-500 mb-6">AI + ルールベースで文章を校正・校閲します</p>
 
               <div className="space-y-4 mb-6">
                 <div>
@@ -404,10 +453,10 @@
 
               <button
                 onClick={handleAnalyze}
-                disabled={!inputText.trim()}
+                disabled={isAnalyzing || !inputText.trim()}
                 className="w-full py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
-                校正・校閲を開始
+                {isAnalyzing ? 'AI分析中...' : '校正・校閲を開始'}
               </button>
             </div>
 
@@ -488,13 +537,27 @@
                   })}
                 </div>
 
+                {isAnalyzing && (
+                  <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3">
+                    <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                    <span className="text-sm text-blue-700 font-medium">AIが分析中です... ファクトチェック・リンクチェックの結果が追加されます</span>
+                  </div>
+                )}
+
+                {aiError && (
+                  <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-700 font-medium">AI分析エラー: {aiError}</p>
+                    <p className="text-xs text-red-500 mt-1">ルールベースのチェック結果は表示されています</p>
+                  </div>
+                )}
+
                 <div className="space-y-4">
                   {currentResults.length === 0 ? (
                     <div className="text-center py-12 text-gray-500">
                       <div className="w-16 h-16 mx-auto mb-4 text-green-500">
                         <CheckCircle />
                       </div>
-                      <p className="text-lg font-medium">このカテゴリに修正点はありません</p>
+                      <p className="text-lg font-medium">{isAnalyzing && activeTabData.ai ? 'AI分析中...' : 'このカテゴリに修正点はありません'}</p>
                     </div>
                   ) : (
                     currentResults.map((item, index) => {
