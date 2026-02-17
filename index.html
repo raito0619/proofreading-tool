@@ -319,23 +319,32 @@
       const [aiError, setAiError] = useState(null);
       const [correctionIndex, setCorrectionIndex] = useState({});
 
-      // AI修正案を生成するリクエスト（カテゴリ単位でバッチ処理）
-      const fetchAiCorrections = async (categoryKey, items, setResultsFn) => {
-        if (!items || items.length === 0) return;
-        const needsAi = items.filter(item => item.corrections === null && item.aiHint);
-        if (needsAi.length === 0) return;
+      // 全カテゴリの修正案をまとめて1回のAPIコールで生成
+      const fetchAllAiCorrections = async (ruleResults, setResultsFn) => {
+        const ruleCategories = ['toneCheck', 'typoCheck', 'readabilityCheck', 'notationCheck'];
+        const allItems = [];
+        const itemMap = []; // { categoryKey, indexInCategory }
+
+        ruleCategories.forEach(catKey => {
+          (ruleResults[catKey] || []).forEach((item, i) => {
+            if (item.corrections === null && item.aiHint) {
+              allItems.push({
+                original: item.original,
+                aiHint: item.aiHint,
+                reason: item.reason
+              });
+              itemMap.push({ categoryKey: catKey, indexInCategory: i });
+            }
+          });
+        });
+
+        if (allItems.length === 0) return;
 
         try {
           const response = await fetch('/api/rewrite', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              items: needsAi.map(item => ({
-                original: item.original,
-                aiHint: item.aiHint,
-                reason: item.reason
-              }))
-            })
+            body: JSON.stringify({ items: allItems })
           });
 
           const data = await response.json();
@@ -344,22 +353,28 @@
           if (data.results) {
             setResultsFn(prev => {
               if (!prev) return prev;
-              const updated = [...(prev[categoryKey] || [])];
-              let aiIdx = 0;
-              updated.forEach((item, i) => {
-                if (item.corrections === null && item.aiHint) {
-                  const aiResult = data.results.find(r => r.index === aiIdx);
-                  if (aiResult && aiResult.corrections && aiResult.corrections.length > 0) {
-                    updated[i] = { ...item, corrections: aiResult.corrections, correction: aiResult.corrections[0] };
-                  }
-                  aiIdx++;
+              const newState = { ...prev };
+              // カテゴリごとにコピーを作成
+              ruleCategories.forEach(catKey => {
+                newState[catKey] = [...(prev[catKey] || [])];
+              });
+              // AI結果をマッピング
+              data.results.forEach(aiResult => {
+                const mapping = itemMap[aiResult.index];
+                if (mapping && aiResult.corrections && aiResult.corrections.length > 0) {
+                  const item = newState[mapping.categoryKey][mapping.indexInCategory];
+                  newState[mapping.categoryKey][mapping.indexInCategory] = {
+                    ...item,
+                    corrections: aiResult.corrections,
+                    correction: aiResult.corrections[0]
+                  };
                 }
               });
-              return { ...prev, [categoryKey]: updated };
+              return newState;
             });
           }
         } catch (error) {
-          console.error(`AI修正案生成エラー (${categoryKey}):`, error);
+          console.error('AI修正案生成エラー:', error);
         }
       };
 
@@ -385,11 +400,9 @@
         setAiError(null);
         setIsAnalyzing(true);
 
-        // AI処理を並行実行
-        const aiTasks = [];
-
-        // 1. ファクトチェック・リンクチェック（既存API）
-        aiTasks.push(
+        // AI処理を2つだけ並行実行（ファクトチェック + 修正案生成）
+        await Promise.allSettled([
+          // 1. ファクトチェック・リンクチェック
           fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -406,18 +419,12 @@
           .catch(err => {
             console.error('AI分析エラー:', err);
             setAiError(err.message);
-          })
-        );
+          }),
 
-        // 2. ルールベース検出結果のAI修正案生成（カテゴリごとに並行リクエスト）
-        const ruleCategories = ['toneCheck', 'typoCheck', 'readabilityCheck', 'notationCheck'];
-        ruleCategories.forEach(catKey => {
-          if (ruleResults[catKey] && ruleResults[catKey].length > 0) {
-            aiTasks.push(fetchAiCorrections(catKey, ruleResults[catKey], setResults));
-          }
-        });
+          // 2. 全カテゴリの修正案をまとめて1回で生成
+          fetchAllAiCorrections(ruleResults, setResults)
+        ]);
 
-        await Promise.allSettled(aiTasks);
         setIsAnalyzing(false);
       };
 
