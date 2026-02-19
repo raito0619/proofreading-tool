@@ -27,37 +27,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 原稿からURLを抽出してアクセス確認（最大5件、タイムアウト3秒）
-    const urls = [...new Set(text.match(/https?:\/\/[^\s\])"'」）>]+/g) || [])];
-    let urlReport = '';
-    if (urls.length > 0) {
-      try {
-        const urlResults = await Promise.all(
-          urls.slice(0, 5).map(async (url) => {
-            try {
-              const controller = new AbortController();
-              const timer = setTimeout(() => controller.abort(), 3000);
-              const resp = await fetch(url, {
-                method: 'HEAD',
-                signal: controller.signal,
-                redirect: 'follow',
-                headers: { 'User-Agent': 'Mozilla/5.0 (compatible; link-checker)' }
-              });
-              clearTimeout(timer);
-              return { url, status: resp.status, ok: resp.ok };
-            } catch (e) {
-              return { url, status: 'error', ok: false, error: e.name === 'AbortError' ? 'タイムアウト' : 'アクセス失敗' };
-            }
-          })
-        );
-        urlReport = `\n\nURL検証結果（サーバー側で実際にアクセスして確認済み）:\n${urlResults.map(r =>
-          r.ok ? `- ${r.url} → ${r.status} OK` : `- ${r.url} → ${r.status === 'error' ? r.error : `HTTP ${r.status}`}（アクセス不可）`
-        ).join('\n')}`;
-      } catch {
-        // URL検証に失敗しても校正自体は続行する
-      }
-    }
-
     const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
 
     const prompt = `あなたはWebメディア専門のプロ校正者です。以下の原稿を校正・校閲し、問題箇所と具体的な修正文を提示してください。
@@ -67,7 +36,7 @@ export default async function handler(req, res) {
 
 チェック項目:
 1. factCheck: 事実と異なる可能性がある記述（数値、固有名詞、日付など）
-2. linkCheck: URLの記述ミスや不適切なリンクテキスト。末尾の「URL検証結果」でアクセス不可と判定されたURLは必ず指摘してください
+2. linkCheck: URLの記述ミスや不適切なリンクテキスト
 3. toneCheck: ですます調/である調の混在
 4. typoCheck: 誤字脱字、不適切な漢字使用（形式名詞・補助動詞はひらがなが一般的）
 5. readabilityCheck: 長すぎる文（80文字超）、語尾の連続重複、読点の多用
@@ -93,9 +62,33 @@ export default async function handler(req, res) {
 }
 
 原稿:
-${text.slice(0, 15000)}${urlReport}`;
+${text.slice(0, 15000)}`;
 
-    const response = await fetch(`${apiUrl}/chat-messages`, {
+    // URL検証とDify APIを並列実行
+    const urls = [...new Set(text.match(/https?:\/\/[^\s\])"'」）>]+/g) || [])];
+
+    const urlCheckPromise = urls.length > 0
+      ? Promise.all(
+          urls.slice(0, 5).map(async (url) => {
+            try {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 3000);
+              const resp = await fetch(url, {
+                method: 'HEAD',
+                signal: controller.signal,
+                redirect: 'follow',
+                headers: { 'User-Agent': 'Mozilla/5.0 (compatible; link-checker)' }
+              });
+              clearTimeout(timer);
+              return { url, status: resp.status, ok: resp.ok };
+            } catch (e) {
+              return { url, status: 'error', ok: false, error: e.name === 'AbortError' ? 'タイムアウト' : 'アクセス失敗' };
+            }
+          })
+        ).catch(() => [])
+      : Promise.resolve([]);
+
+    const difyPromise = fetch(`${apiUrl}/chat-messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -109,15 +102,17 @@ ${text.slice(0, 15000)}${urlReport}`;
       })
     });
 
-    if (!response.ok) {
-      const errorBody = await response.text();
+    const [urlResults, difyResponse] = await Promise.all([urlCheckPromise, difyPromise]);
+
+    if (!difyResponse.ok) {
+      const errorBody = await difyResponse.text();
       return res.status(500).json({
-        error: `Dify API error: ${response.status}`,
+        error: `Dify API error: ${difyResponse.status}`,
         details: errorBody
       });
     }
 
-    const data = await response.json();
+    const data = await difyResponse.json();
     const resultText = data.answer || '';
 
     // JSON部分を抽出
@@ -144,6 +139,22 @@ ${text.slice(0, 15000)}${urlReport}`;
           parsedResults[cat] = [];
         }
       });
+
+      // URL検証でアクセス不可だったURLをlinkCheckに追加
+      const deadUrls = urlResults.filter(r => !r.ok);
+      for (const dead of deadUrls) {
+        const alreadyReported = parsedResults.linkCheck.some(item => item.original && item.original.includes(dead.url));
+        if (!alreadyReported) {
+          const statusText = dead.status === 'error' ? dead.error : `HTTP ${dead.status}`;
+          parsedResults.linkCheck.push({
+            context: `原稿内のURL: ${dead.url}`,
+            original: dead.url,
+            corrections: [`URLが${statusText}でアクセスできません。リンク先を確認して正しいURLに修正してください`],
+            correction: `URLが${statusText}でアクセスできません。リンク先を確認して正しいURLに修正してください`,
+            reason: `サーバーに実際にアクセスして検証した結果、${statusText}でアクセスできませんでした`
+          });
+        }
+      }
 
       return res.status(200).json(parsedResults);
     } else {
