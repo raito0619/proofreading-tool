@@ -27,11 +27,43 @@ export default async function handler(req, res) {
   }
 
   try {
+    // 原稿からURLを抽出してアクセス確認
+    const urls = text.match(/https?:\/\/[^\s\])"'」）>]+/g) || [];
+    const urlResults = await Promise.all(
+      urls.slice(0, 20).map(async (url) => {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5000);
+          const resp = await fetch(url, {
+            method: 'HEAD',
+            signal: controller.signal,
+            redirect: 'follow',
+            headers: { 'User-Agent': 'Mozilla/5.0 (proofreading-tool link checker)' }
+          });
+          clearTimeout(timeout);
+          return { url, status: resp.status, ok: resp.ok };
+        } catch (e) {
+          return { url, status: 'error', ok: false, error: e.name === 'AbortError' ? 'タイムアウト' : e.message };
+        }
+      })
+    );
+
+    const urlReport = urlResults.length > 0
+      ? `\n\nURL検証結果（サーバー側で実際にアクセスして確認済み）:\n${urlResults.map(r =>
+          r.ok ? `- ${r.url} → ${r.status} OK` : `- ${r.url} → ${r.status === 'error' ? r.error : `HTTP ${r.status}`}（アクセス不可）`
+        ).join('\n')}`
+      : '';
+
+    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+
     const prompt = `あなたはWebメディア専門のプロ校正者です。以下の原稿を校正・校閲し、問題箇所と具体的な修正文を提示してください。
+
+今日の日付: ${today}
+※日付や年号の誤りに注意してください。未来の日付を過去として記述していないか、年号が正しいか確認してください。
 
 チェック項目:
 1. factCheck: 事実と異なる可能性がある記述（数値、固有名詞、日付など）
-2. linkCheck: URLの記述ミスや不適切なリンクテキスト
+2. linkCheck: URLの記述ミスや不適切なリンクテキスト。末尾の「URL検証結果」でアクセス不可と判定されたURLは必ず指摘してください
 3. toneCheck: ですます調/である調の混在
 4. typoCheck: 誤字脱字、不適切な漢字使用（形式名詞・補助動詞はひらがなが一般的）
 5. readabilityCheck: 長すぎる文（80文字超）、語尾の連続重複、読点の多用
@@ -57,7 +89,7 @@ export default async function handler(req, res) {
 }
 
 原稿:
-${text.slice(0, 15000)}`;
+${text.slice(0, 15000)}${urlReport}`;
 
     const response = await fetch(`${apiUrl}/chat-messages`, {
       method: 'POST',
