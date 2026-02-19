@@ -27,32 +27,36 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 原稿からURLを抽出してアクセス確認
-    const urls = text.match(/https?:\/\/[^\s\])"'」）>]+/g) || [];
-    const urlResults = await Promise.all(
-      urls.slice(0, 20).map(async (url) => {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 5000);
-          const resp = await fetch(url, {
-            method: 'HEAD',
-            signal: controller.signal,
-            redirect: 'follow',
-            headers: { 'User-Agent': 'Mozilla/5.0 (proofreading-tool link checker)' }
-          });
-          clearTimeout(timeout);
-          return { url, status: resp.status, ok: resp.ok };
-        } catch (e) {
-          return { url, status: 'error', ok: false, error: e.name === 'AbortError' ? 'タイムアウト' : e.message };
-        }
-      })
-    );
-
-    const urlReport = urlResults.length > 0
-      ? `\n\nURL検証結果（サーバー側で実際にアクセスして確認済み）:\n${urlResults.map(r =>
+    // 原稿からURLを抽出してアクセス確認（最大5件、タイムアウト3秒）
+    const urls = [...new Set(text.match(/https?:\/\/[^\s\])"'」）>]+/g) || [])];
+    let urlReport = '';
+    if (urls.length > 0) {
+      try {
+        const urlResults = await Promise.all(
+          urls.slice(0, 5).map(async (url) => {
+            try {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 3000);
+              const resp = await fetch(url, {
+                method: 'HEAD',
+                signal: controller.signal,
+                redirect: 'follow',
+                headers: { 'User-Agent': 'Mozilla/5.0 (compatible; link-checker)' }
+              });
+              clearTimeout(timer);
+              return { url, status: resp.status, ok: resp.ok };
+            } catch (e) {
+              return { url, status: 'error', ok: false, error: e.name === 'AbortError' ? 'タイムアウト' : 'アクセス失敗' };
+            }
+          })
+        );
+        urlReport = `\n\nURL検証結果（サーバー側で実際にアクセスして確認済み）:\n${urlResults.map(r =>
           r.ok ? `- ${r.url} → ${r.status} OK` : `- ${r.url} → ${r.status === 'error' ? r.error : `HTTP ${r.status}`}（アクセス不可）`
-        ).join('\n')}`
-      : '';
+        ).join('\n')}`;
+      } catch {
+        // URL検証に失敗しても校正自体は続行する
+      }
+    }
 
     const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
 
